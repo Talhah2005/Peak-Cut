@@ -36,7 +36,7 @@ def _quiet(fn):
 
 app = FastAPI(title="PeakCut", docs_url=None, redoc_url=None, openapi_url=None)
 WEB = config.ROOT / "web"
-OPEN = ("/api/auth/", "/pub/", "/api/public", "/auth/google/", "/auth/verify", "/brand/", "/assets/", "/healthz", "/favicon.ico", "/robots.txt", "/sitemap.xml")
+OPEN = ("/api/auth/", "/pub/", "/api/public", "/auth/google/", "/auth/verify", "/brand/", "/assets/", "/healthz", "/favicon.ico", "/robots.txt", "/sitemap.xml", "/tiktok")
 PAGES = {"/": "landing.html", "/login": "auth.html", "/signup": "auth.html", "/reset": "reset.html",
          "/privacy": "legal.html", "/terms": "legal.html", "/acceptable-use": "legal.html"}
 VIDEO_TYPES = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".ts", ".flv"}
@@ -269,7 +269,7 @@ def _own_address(host: str) -> bool:
     import ipaddress
     name = host.strip().lower()
     name = name[1:name.index("]")] if name.startswith("[") and "]" in name else name.rsplit(":", 1)[0] if ":" in name else name
-    if name in ("localhost", urlparse(config.PUBLIC_URL).hostname or "") or name.endswith(".localhost"):
+    if name in ("localhost", urlparse(config.PUBLIC_URL).hostname or "") or name.endswith(".localhost") or name.endswith(".trycloudflare.com"):
         return True
     try:
         ipaddress.ip_address(name)
@@ -316,6 +316,13 @@ def landing():
     # fresh for five minutes; after that a CDN or browser may show its copy while it quietly fetches the new one
     return HTMLResponse(_LANDING["html"], headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=86400",
                                                    "ETag": _LANDING["etag"]})
+
+
+@app.get("/tiktokCpB9xb0pTRj3ASDmxjfms3Nyipo4crgl.txt")
+@app.get("/tiktok{code}.txt")
+def tiktok_verify(code: str = "CpB9xb0pTRj3ASDmxjfms3Nyipo4crgl"):
+    return Response(f"tiktok-developers-site-verification={code}", media_type="text/plain",
+                    headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/robots.txt")
@@ -1323,11 +1330,14 @@ def _back(**q):
 
 
 @app.get("/oauth/{platform}/start")
-def connect_start(platform: str):
+def connect_start(request: Request, platform: str):
     if platform not in accounts.PLATFORM_NAMES:
         raise HTTPException(404)
     try:
-        return RedirectResponse(accounts.connect_url(platform), 303)
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+        proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+        base = f"{proto}://{host}" if host else ""
+        return RedirectResponse(accounts.connect_url(platform, base), 303)
     except ValueError as e:
         return _back(connect_error=str(e))
 

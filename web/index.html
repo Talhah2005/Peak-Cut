@@ -443,6 +443,10 @@ img.av{object-fit:cover}
 .ai-form .hint{font-size:12px;font-weight:400;color:var(--dim)}
 .ai-form .hint a{color:var(--brand-deep);font-weight:600}
 .ai-form .hint a:hover{color:var(--brand-ink)}
+#ai_models_list{max-height:220px;overflow-y:auto;border:1px solid var(--line-2);border-radius:var(--r-sm);background:#fff;margin-top:6px;box-shadow:0 4px 14px rgba(0,0,0,0.12);scrollbar-width:thin}
+#ai_models_list::-webkit-scrollbar{width:8px}
+#ai_models_list::-webkit-scrollbar-thumb{background:#999;border-radius:4px}
+#ai_models_list::-webkit-scrollbar-track{background:#f1f1f1;border-radius:4px}
 .ai-state{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:18px}
 .set-sec{padding:0 0 26px;margin-bottom:26px;border-bottom:1px solid var(--line)}
 .set-sec:last-child{border-bottom:0}
@@ -2021,7 +2025,8 @@ async function drawSettings() {
             <label class="f">AI service<select id="ai_provider">${k.providers.map(x => `<option value="${esc(x.id)}" ${x.id === k.provider ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select></label>
             <label class="f">Key<input id="ai_key" type="password" autocomplete="off" spellcheck="false"><span class="hint" id="ai_keyhint"></span></label>
             <label class="f" id="ai_basewrap">Address<input id="ai_base" value="${esc(k.base_url || "")}" spellcheck="false"><span class="hint">Where the service answers. Only needed for a custom service.</span></label>
-            <label class="f">Model<span class="with"><input id="ai_model" list="ai_models" value="${esc(k.models.join(", "))}" spellcheck="false"><button class="btn" type="button" data-act="aimodels">Find models</button></span>
+            <label class="f">Model<span class="with"><input id="ai_model" list="ai_models" value="${esc(k.models.join(", "))}" spellcheck="false" placeholder="Type or click Find models"><button class="btn" type="button" data-act="aimodels">Find models</button></span>
+              <div id="ai_models_list" style="display:none"></div>
               <datalist id="ai_models"></datalist><span class="hint">A fast, inexpensive model is the right choice. Add a second one after a comma to fall back on.</span></label>
           </div>
           <div class="row" style="margin-top:20px"><button class="btn primary" data-act="aisave">Save and test</button>${k.ready ? `<button class="btn" data-act="aitest">Test again</button>` : ""}</div></section>`;
@@ -2245,7 +2250,31 @@ document.addEventListener("click", async e => {
       try {
         const r = await send("/api/ai/models", {provider: $("#ai_provider").value, base_url: $("#ai_base").value, key: $("#ai_key").value});
         $("#ai_models").innerHTML = r.models.map(m => `<option value="${esc(m)}">`).join("");
-        toast(r.models.length ? `${r.models.length} models found. Click the model box to pick one.` : "The service listed no models. Type the model yourself.", r.models.length ? "ok" : "");
+        const list = $("#ai_models_list");
+        if (list && r.models && r.models.length) {
+          list.innerHTML = r.models.map(m => `
+            <div class="aimodel-opt" style="padding:9px 12px; cursor:pointer; font-size:13px; border-bottom:1px solid var(--line); color:var(--text); transition:background .1s;" onmouseover="this.style.background='var(--muted)'" onmouseout="this.style.background='transparent'">${esc(m)}</div>
+          `).join("");
+          list.style.display = "block";
+          list.querySelectorAll(".aimodel-opt").forEach(item => {
+            item.onclick = () => {
+              $("#ai_model").value = item.textContent.trim();
+              list.style.display = "none";
+            };
+          });
+          const inp = $("#ai_model");
+          inp.oninput = () => {
+            const q = inp.value.toLowerCase().trim();
+            list.style.display = "block";
+            list.querySelectorAll(".aimodel-opt").forEach(item => {
+              item.style.display = (!q || item.textContent.toLowerCase().includes(q)) ? "block" : "none";
+            });
+          };
+          inp.onclick = () => {
+            if (list.children.length) list.style.display = list.style.display === "none" ? "block" : "none";
+          };
+        }
+        toast(r.models.length ? `${r.models.length} models found. Scroll or click below to pick.` : "The service listed no models. Type the model yourself.", r.models.length ? "ok" : "");
         if (r.models.length) $("#ai_model").focus();
       } finally { b.disabled = false; }
       return;

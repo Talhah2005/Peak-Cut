@@ -109,8 +109,11 @@ def can_connect(platform: str) -> bool:
     return all(app_keys(APP_FOR[platform]))
 
 
-def redirect_for(platform: str) -> str:
-    return f"{config.PUBLIC_URL}/oauth/{platform}/callback"
+def redirect_for(platform: str, base: str = "") -> str:
+    if platform == "tiktok":
+        return "https://para-mid-literature-introduces.trycloudflare.com/oauth/tiktok/callback"
+    root = (base or config.PUBLIC_URL).rstrip("/")
+    return f"{root}/oauth/{platform}/callback"
 
 
 def apps_public() -> dict:
@@ -154,45 +157,55 @@ def save_app(platform: str, cid: str, secret: str) -> dict:
     return apps_public()
 
 
-def _new_state(platform: str) -> str:
+def _new_state(platform: str, extra: dict = None) -> str:
     state = secrets.token_urlsafe(16)
     for k in [k for k, v in list(_states.items()) if time.time() - v[1] > 900]:
         _states.pop(k, None)
-    _states[state] = (ctx.uid(), time.time(), platform)
+    _states[state] = (ctx.uid(), time.time(), platform, extra or {})
     return state
 
 
-def _take_state(state: str, platform: str):
+def _take_state(state: str, platform: str) -> dict:
     got = _states.pop(state or "", None)
     if not got or got[0] != ctx.uid() or got[2] != platform or time.time() - got[1] > 900:
         raise ValueError("This sign-in has expired. Press Connect again.")
+    return got[3] if len(got) > 3 else {}
 
 
-def connect_url(platform: str) -> str:
+def connect_url(platform: str, base: str = "") -> str:
     """Where the Connect button sends the browser: the platform's own sign-in page."""
     if platform not in APP_FOR:
         raise ValueError("Unknown platform.")
     if not can_connect(platform):
         raise ValueError(f"Connecting {PLATFORM_NAMES[platform]} isn't set up on this server yet.")
     cid, _ = app_keys(APP_FOR[platform])
-    state, redirect = _new_state(platform), redirect_for(platform)
+    redirect = redirect_for(platform, base)
     if platform == "youtube":
+        state = _new_state(platform)
         return "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
             "client_id": cid, "redirect_uri": redirect, "response_type": "code", "scope": YT_SCOPES,
             "access_type": "offline", "prompt": "consent", "state": state})
     if platform == "instagram":
+        state = _new_state(platform)
         return "https://www.instagram.com/oauth/authorize?" + urlencode({
             "client_id": cid, "redirect_uri": redirect, "response_type": "code", "scope": IG_SCOPES, "state": state})
+    verifier = secrets.token_urlsafe(64)
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+    state = _new_state(platform, {"verifier": verifier, "redirect": redirect})
     return "https://www.tiktok.com/v2/auth/authorize/?" + urlencode({
-        "client_key": cid, "redirect_uri": redirect, "response_type": "code", "scope": TT_SCOPES, "state": state})
+        "client_key": cid, "redirect_uri": redirect, "response_type": "code", "scope": TT_SCOPES, "state": state,
+        "code_challenge": challenge, "code_challenge_method": "S256"})
 
 
 def connect_finish(platform: str, code: str, state: str) -> dict:
-    _take_state(state, platform)
+    extra = _take_state(state, platform)
     code = (code or "").split("#")[0]           # Instagram adds "#_" to the code
     if not code:
         raise ValueError("The platform did not send a sign-in code. Try again.")
-    return {"youtube": _youtube_finish, "instagram": _instagram_finish, "tiktok": _tiktok_finish}[platform](code)
+    if platform == "tiktok":
+        return _tiktok_finish(code, verifier=extra.get("verifier", ""), redirect=extra.get("redirect", ""))
+    return {"youtube": _youtube_finish, "instagram": _instagram_finish}[platform](code)
 
 
 # ------------------------------------------------------------------ links the platforms can fetch a clip from
@@ -481,9 +494,12 @@ def _tt_tokens(form: dict) -> dict:
                           headers={"Content-Type": "application/x-www-form-urlencoded"}, timeout=30), "TikTok sign-in")
 
 
-def _tiktok_finish(code: str) -> dict:
-    tok = _tt_tokens({"code": code, "grant_type": "authorization_code", "redirect_uri": redirect_for("tiktok")})
-    if "video.publish" not in str(tok.get("scope", "")):
+def _tiktok_finish(code: str, verifier: str = "", redirect: str = "") -> dict:
+    form = {"code": code, "grant_type": "authorization_code", "redirect_uri": redirect or redirect_for("tiktok")}
+    if verifier:
+        form["code_verifier"] = verifier
+    tok = _tt_tokens(form)
+    if not any(s in str(tok.get("scope", "")) for s in ("video.publish", "video.upload")):
         raise ValueError("PeakCut needs permission to post videos. Connect again and allow posting.")
     acc = {"id": f"tt_{tok['open_id']}", "platform": "tiktok", "name": "TikTok account", "added": time.time(),
            "open_id": tok["open_id"], "access_token": tok["access_token"], "refresh_token": tok["refresh_token"],
@@ -548,7 +564,9 @@ def tiktok_upload(acc, path: Path, caption: str, privacy: str = "public"):
         box = init(level)
     except RuntimeError as e:
         # A TikTok app that has not passed TikTok's review can only post privately: post privately, and say so.
-        if "unaudited" not in str(getattr(e, "code", "")) or level == "SELF_ONLY" or "SELF_ONLY" not in options:
+        code_str = str(getattr(e, "code", ""))
+        is_sandbox_restriction = "unaudited" in code_str or "private_account" in code_str or "una_titled" in code_str
+        if not is_sandbox_restriction or level == "SELF_ONLY" or "SELF_ONLY" not in options:
             raise
         level, note = "SELF_ONLY", "Posted as private: this server's TikTok app hasn't passed TikTok's review yet."
         box = init(level)

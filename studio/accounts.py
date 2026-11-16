@@ -110,9 +110,12 @@ def can_connect(platform: str) -> bool:
 
 
 def redirect_for(platform: str, base: str = "") -> str:
-    if platform == "tiktok":
-        return "https://para-mid-literature-introduces.trycloudflare.com/oauth/tiktok/callback"
     root = (base or config.PUBLIC_URL).rstrip("/")
+    if platform == "tiktok":
+        # If running behind Cloudflare or another HTTPS proxy, use that public root
+        if root.startswith("https://"):
+            return f"{root}/oauth/tiktok/callback"
+        return "https://hall-conservation-receive-spread.trycloudflare.com/oauth/tiktok/callback"
     return f"{root}/oauth/{platform}/callback"
 
 
